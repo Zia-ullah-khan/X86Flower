@@ -6,7 +6,7 @@ BITS 32
         EXTERN  DefWindowProcA, PostQuitMessage, ExitProcess
         EXTERN  BeginPaint, EndPaint, GetStockObject, SelectObject, DeleteObject
         EXTERN  CreatePen, CreateSolidBrush, Polygon, Ellipse
-        EXTERN  SetTimer, KillTimer, InvalidateRect
+        EXTERN  SetTimer, KillTimer, InvalidateRect, SetWindowTextA
 
 %define WNDCLASSEX_size 48
 %define MSG_size        28
@@ -21,6 +21,8 @@ COLOR_WINDOW        equ 5
 WM_DESTROY          equ 0002h
 WM_PAINT            equ 000Fh
 WM_TIMER            equ 0113h
+WM_KEYDOWN          equ 0100h
+WM_COMMAND          equ 0111h
 PS_SOLID            equ 0
 FCX                 equ 200
 FCY                 equ 150
@@ -31,6 +33,14 @@ TIMER_INTERVAL      equ 50
 SECTION .data
 className   db "MyNasmClass",0
 caption     db "X86 Animated Flower",0
+
+animationEnabled    dd 1
+
+buttonTextOn    db "Pause Animation",0
+buttonTextOff   db "Resume Animation",0
+BUTTON_CLASS    db "BUTTON",0
+buttonHwnd      dd 0
+BUTTON_ID       equ 1001
 
 petal1Offsets:
     dd   0, -70
@@ -91,7 +101,7 @@ hMainWnd    resd 1
 
 SECTION .text
 WinMain:
-    push    NULL
+    push    dword NULL
     call    [GetModuleHandleA]
     mov     [hInstance], eax
 
@@ -116,36 +126,52 @@ WinMain:
     push    dword [hInstance]
     push    dword NULL
     push    dword NULL
-    push    300
-    push    400
-    push    CW_USEDEFAULT
-    push    CW_USEDEFAULT
-    push    WS_OVERLAPPEDWINDOW
-    push    caption
-    push    className
-    push    NULL
+    push    dword 300
+    push    dword 400
+    push    dword CW_USEDEFAULT
+    push    dword CW_USEDEFAULT
+    push    dword WS_OVERLAPPEDWINDOW
+    push    dword caption
+    push    dword className
+    push    dword NULL
     call    [CreateWindowExA]
     mov     [hMainWnd], eax
     mov     ebx, eax
 
-    push    SW_SHOWNORMAL
+    push    dword 0
+    push    dword 0
+    push    dword [hInstance]
+    push    dword buttonTextOn
+    push    dword 0x50010000
+    push    dword 40
+    push    dword 140
+    push    dword 20
+    push    dword 20
+    push    dword BUTTON_CLASS
+    push    dword [hMainWnd]
+    push    dword BUTTON_ID
+    push    dword NULL
+    call    [CreateWindowExA]
+    mov     [buttonHwnd], eax
+
+    push    dword SW_SHOWNORMAL
     push    ebx
     call    [ShowWindow]
 
     push    ebx
     call    [UpdateWindow]
 
-    push    NULL
-    push    TIMER_INTERVAL
-    push    TIMER_ID
+    push    dword NULL
+    push    dword TIMER_INTERVAL
+    push    dword TIMER_ID
     push    dword [hMainWnd]
     call    [SetTimer]
 
 msg_loop:
-    push    0
-    push    0
-    push    NULL
-    push    msg
+    push    dword 0
+    push    dword 0
+    push    dword NULL
+    push    dword msg
     call    [GetMessageA]
     test    eax, eax
     jz      exit_loop
@@ -178,14 +204,20 @@ WndProc:
     cmp     eax, WM_TIMER
     je      .wm_timer
 
+    cmp     eax, WM_KEYDOWN
+    je      .wm_keydown
+
+    cmp     eax, WM_COMMAND
+    je      .wm_command
+
     jmp     .defproc
 
 .wm_destroy:
-    push    TIMER_ID
+    push    dword TIMER_ID
     push    dword [ebp+8]
     call    [KillTimer]
 
-    push    0
+    push    dword 0
     call    [PostQuitMessage]
     xor     eax, eax
     jmp     .epilog
@@ -193,6 +225,9 @@ WndProc:
 .wm_timer:
     cmp     dword [ebp+16], TIMER_ID
     jne     .defproc
+
+    cmp     dword [animationEnabled], 0
+    je      .skip_animation
 
     mov     eax, [animationScale]
     mov     ecx, [animationDirection]
@@ -218,10 +253,14 @@ WndProc:
 .scale_updated:
     mov     [animationScale], eax
 
-    push    1
-    push    0
+    push    dword 1
+    push    dword 0
     push    dword [ebp+8]
     call    [InvalidateRect]
+    xor     eax, eax
+    jmp     .epilog
+
+.skip_animation:
     xor     eax, eax
     jmp     .epilog
 
@@ -231,13 +270,13 @@ WndProc:
     call    [BeginPaint]
     mov     ebx, eax
 
-    push    GREEN_COLOR
-    push    1
-    push    PS_SOLID
+    push    dword GREEN_COLOR
+    push    dword 1
+    push    dword PS_SOLID
     call    [CreatePen]
     mov     esi, eax
 
-    push    PINK_COLOR
+    push    dword PINK_COLOR
     call    [CreateSolidBrush]
     mov     edi, eax
 
@@ -266,7 +305,7 @@ WndProc:
     call    ScaleAndDrawPetal
 
     pop     eax
-    push    eax
+    push     eax
     push    ebx
     call    [SelectObject]
 
@@ -279,13 +318,13 @@ WndProc:
     push    esi
     call    [DeleteObject]
 
-    push    BLACK_COLOR
-    push    1
-    push    PS_SOLID
+    push    dword BLACK_COLOR
+    push    dword 1
+    push    dword PS_SOLID
     call    [CreatePen]
     mov     esi, eax
 
-    push    YELLOW_COLOR
+    push    dword YELLOW_COLOR
     call    [CreateSolidBrush]
     mov     edi, eax
 
@@ -321,6 +360,38 @@ WndProc:
     push    ps
     push    dword [ebp+8]
     call    [EndPaint]
+    xor     eax, eax
+    jmp     .epilog
+
+.wm_keydown:
+    mov     eax, [ebp+16]
+    cmp     eax, 32
+    jne     .defproc
+    mov     eax, [animationEnabled]
+    xor     eax, 1
+    mov     [animationEnabled], eax
+    xor     eax, eax
+    jmp     .epilog
+
+.wm_command:
+    mov     eax, [ebp+16]
+    and     eax, 0FFFFh
+    cmp     eax, BUTTON_ID
+    jne     .defproc
+    mov     eax, [animationEnabled]
+    xor     eax, 1
+    mov     [animationEnabled], eax
+    cmp     eax, 0
+    jne     .set_pause
+    push    dword buttonTextOff
+    jmp     .set_text
+.set_pause:
+    push    dword buttonTextOn
+.set_text:
+    push    dword 0
+    push    eax
+    push    dword [buttonHwnd]
+    call    [SetWindowTextA]
     xor     eax, eax
     jmp     .epilog
 
@@ -369,8 +440,8 @@ ScaleAndDrawPetal:
     add     edi, 8
     loop    .scale_loop
 
-    push    petalPointCount
-    push    tempPetalPoints
+    push    dword petalPointCount
+    push    dword tempPetalPoints
     push    ebx
     call    [Polygon]
 
